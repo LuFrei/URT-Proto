@@ -1,0 +1,46 @@
+// File for URT API functions.
+#include "Packages/com.unity.render-pipelines.core/Runtime/UnifiedRayTracing/TraceRayAndQueryHit.hlsl"
+
+
+// Declare accelration structure binding.
+UNIFIED_RT_DECLARE_ACCEL_STRUCT(_AccelStruct);
+
+uint _RenderWidth;
+uint _RenderHeight;
+float4 _CameraFrustrum;
+float4x4 _CameraToWorldMatrix;
+RWTexture2D<float4> _OutputTexture;
+
+UnifiedRT::Ray GenerateFrustrumRay(float2 frameCoord, uint2 resolution) {
+    float2 ndcCoords01 = (frameCoord + 0.5) / float2(resolution);
+    float3 viewDirection = float3(
+        lerp(_CameraFrustrum.x, _CameraFrustrum.y, ndcCoords01.x),
+        lerp(_CameraFrustrum.z, _CameraFrustrum.w, ndcCoords01.y),
+        -1.0
+    );
+
+    UnifiedRT::Ray ray;
+    ray.origin = transpose(_CameraToWorldMatrix)[3].xyz;
+    ray.direction = mul((float3x3) _CameraToWorldMatrix, normalize(viewDirection));
+    ray.tMin = 0.0f;
+    ray.tMax = 100000.0f;
+
+    return ray;
+}
+
+// Shader entry-point.
+// DisptachInfo provides the current thread index in the dispatch.
+void RayGenExecute(UnifiedRT::DispatchInfo dispatchInfo) {
+    UnifiedRT::Ray ray = GenerateFrustrumRay(dispatchInfo.dispatchThreadID.xy, uint2(_RenderWidth, _RenderHeight));
+
+    // Retrieve acceleration structure
+    UnifiedRT::RayTracingAccelStruct accelStruct = UNIFIED_RT_GET_ACCEL_STRUCT(_AccelStruct);
+
+    // Trace ray in the accel struct
+    UnifiedRT::Hit hitResult = UnifiedRT::TraceRayClosestHit(dispatchInfo, accelStruct, 0xFFFFFFFF, ray, UnifiedRT::kRayFlagNone);
+    float2 uv = hitResult.uvBarycentrics;
+
+    // Display hit triangle barycentrics coords as RGB.
+    float3 color = hitResult.IsValid() ? float3(uv.x, uv.y, 1.0 - uv.x - uv.y) : 0.0;
+    _OutputTexture[dispatchInfo.dispatchThreadID.xy] = float4(color, 1.0);
+}
